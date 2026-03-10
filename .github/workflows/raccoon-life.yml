@@ -1,0 +1,88 @@
+name: 🦝 RaccoonDev Life Cycle
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'  # Cada 4 horas actualiza estados naturales
+  issues:
+    types: [opened, edited]
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Acción manual'
+        required: true
+        default: 'status'
+        type: choice
+        options:
+          - status
+          - feed
+          - play
+          - sleep
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  raccoon-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout repo
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: 📦 Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: 🧠 Process Raccoon Logic
+        id: raccoon
+        run: |
+          python scripts/update_raccoon.py \
+            --event "${{ github.event_name }}" \
+            --action "${{ github.event.inputs.action || 'auto' }}" \
+            --issue-number "${{ github.event.issue.number || '0' }}" \
+            --issue-body "${{ github.event.issue.body || '' }}" \
+            --commit-message "${{ github.event.head_commit.message || '' }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+
+      - name: 🎨 Update README
+        run: python scripts/generate_ascii.py
+
+      - name: 💾 Commit & Push Changes
+        run: |
+          git config user.name "RaccoonBot 🤖"
+          git config user.email "raccoon@github.bot"
+          
+          if [ -n "$(git status --porcelain)" ]; then
+            git add data/pet-state.json README.md
+            git commit -m "${{ steps.raccoon.outputs.commit_message }}"
+            git push
+          else
+            echo "No changes to commit"
+          fi
+
+      - name: 💬 Respond to Issue (if applicable)
+        if: github.event_name == 'issues' && success()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const output = `${{ steps.raccoon.outputs.response }}`;
+            if (output && '${{ github.event.issue.number }}' !== '0') {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              });
+            }
